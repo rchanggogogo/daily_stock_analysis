@@ -1,3 +1,43 @@
+[project]
+name = "daily-stock-analysis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "akshare>=1.12.0",
+    "baostock>=0.8.0",
+    "dingtalk-stream>=0.24.3",
+    "discord-py>=2.0.0",
+    "efinance>=0.5.5",
+    "exchange-calendars>=4.5.0",
+    "fake-useragent>=1.4.0",
+    "fastapi>=0.109.0",
+    "google-search-results>=2.4.0",
+    "httpx[socks]>=0.28.1",
+    "imgkit>=1.2.0",
+    "json-repair>=0.55.1",
+    "lark-oapi>=1.0.0",
+    "litellm>=1.80.10",
+    "lxml-html-clean>=0.4.4",
+    "markdown2>=2.4.0",
+    "newspaper3k>=0.2.8",
+    "numpy>=1.24.0",
+    "openai>=1.0.0",
+    "pandas>=2.0.0",
+    "pytdx>=1.72",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.6",
+    "requests>=2.31.0",
+    "schedule>=1.2.0",
+    "sqlalchemy>=2.0.0",
+    "tavily-python>=0.3.0",
+    "tenacity>=8.2.0",
+    "tushare>=1.4.0",
+    "uvicorn[standard]>=0.27.0",
+    "yfinance>=0.2.0",
+]
+
 [tool.black]
 line-length = 120
 target-version = ['py310', 'py311', 'py312']
@@ -26,3 +66,24 @@ skip = [".git", "__pycache__", ".env", "venv", ".venv"]
 [tool.bandit]
 exclude_dirs = ["tests", "test_*.py"]
 skips = ["B101"]  # assert 语句在测试中是允许的
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = ["E501"]  # line too long (handled by formatter)
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

@@ -154,6 +154,11 @@
   - 更新 `README.md`、`docs/README_EN.md`、`docs/README_CHT.md` 与 changelog，补充策略问股使用说明与测试说明
 - 📝 **LiteLLM Proxy 文档**
   - 更新 `docs/full-guide.md`、`README.md`、`.env.example`，补充 LiteLLM Proxy 配置说明与冲突警告
+- 📦 **uv 包管理器迁移**
+  - 项目改为使用 uv 进行依赖管理（比 pip 快 10-100 倍）
+  - 新增 `pyproject.toml` 配置：black、isort、ruff、bandit
+  - 更新 `README.md` 和 `docs/CONTRIBUTING.md`，使用 `uv sync` 和 `uv run` 命令
+  - 开发者可使用 `uv run python main.py` 运行脚本，或 `source .venv/bin/activate` 激活虚拟环境后直接运行
 
 ## [3.2.11] - 2026-02-23
 

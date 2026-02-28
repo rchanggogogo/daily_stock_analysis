@@ -162,14 +162,15 @@
 # 克隆项目
 git clone https://github.com/ZhuLinsen/daily_stock_analysis.git && cd daily_stock_analysis
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（推荐使用 uv，比 pip 快 10-100 倍）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
 
 # 配置环境变量
 cp .env.example .env && vim .env
 
 # 运行分析
-python main.py
+uv run python main.py
 ```
 
 > Docker 部署、定时任务配置请参考 [完整指南](docs/full-guide.md)
@@ -307,9 +308,12 @@ python main.py
 ### 本地门禁（建议先跑）
 
 ```bash
-pip install -r requirements.txt
-pip install flake8 pytest
-./scripts/ci_gate.sh
+# 使用 uv 安装依赖（推荐）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+
+# 运行门禁检查
+uv run ./scripts/ci_gate.sh
 ```
 
 如修改前端（`apps/dsa-web`）：

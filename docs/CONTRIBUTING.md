@@ -23,16 +23,26 @@
 git clone https://github.com/ZhuLinsen/daily_stock_analysis.git
 cd daily_stock_analysis
 
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# 安装 uv（比 pip 快 10-100 倍）
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 安装依赖
-pip install -r requirements.txt
+# 同步依赖（自动创建虚拟环境）
+uv sync
 
 # 配置环境变量
 cp .env.example .env
+```
+
+**运行命令：**
+
+```bash
+# 运行脚本
+uv run python main.py
+uv run ./scripts/ci_gate.sh
+
+# 或激活虚拟环境后直接运行
+source .venv/bin/activate  # Linux/Mac
+python main.py
 ```
 
 ### 提交流程
@@ -87,9 +97,8 @@ docs: 更新 README 部署说明
 
 ```bash
 # backend gate（推荐）
-pip install -r requirements.txt
-pip install flake8 pytest
-./scripts/ci_gate.sh
+uv sync
+uv run ./scripts/ci_gate.sh
 
 # 前端 gate（如修改了 apps/dsa-web）
 cd apps/dsa-web
