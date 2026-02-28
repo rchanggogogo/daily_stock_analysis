@@ -160,6 +160,12 @@
   - 更新 `README.md` 和 `docs/CONTRIBUTING.md`，使用 `uv sync` 和 `uv run` 命令
   - 开发者可使用 `uv run python main.py` 运行脚本，或 `source .venv/bin/activate` 激活虚拟环境后直接运行
   - Dockerfile 集成 uv，使用 `uv sync --frozen` 加速依赖安装，保持 pip 回退兼容性
+- 🔧 **ruff 自动格式化集成**
+  - `scripts/ci_gate.sh` 用 ruff 替代 flake8 进行 lint 检查
+  - 添加 ruff format 检查到 CI 流程，确保代码格式统一
+  - 新增 `.pre-commit-config.yaml`，支持提交前自动格式化
+  - `pyproject.toml` 新增 `[project.optional-dependencies]`，包含 ruff、black、isort、bandit、pytest 等开发工具
+  - 安装方式：`uv sync --extra dev` 或 `pip install -e ".[dev]"`
 
 ## [3.2.11] - 2026-02-23
 

@@ -26,7 +26,11 @@ cd daily_stock_analysis
 # 安装 uv（比 pip 快 10-100 倍）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 同步依赖（自动创建虚拟环境）
+
+# 开发者：同步包含 dev 工具（ruff、black、pytest 等）
+uv sync --extra dev
+
+# 普通用户：同步仅生产依赖（不含 dev 工具）
 uv sync
 
 # 配置环境变量
@@ -43,6 +47,36 @@ uv run ./scripts/ci_gate.sh
 # 或激活虚拟环境后直接运行
 source .venv/bin/activate  # Linux/Mac
 python main.py
+
+```
+**安装依赖**
+
+```bash
+uv add <package-name>
+
+# 安装依赖到[project.optional-dependencies]
+uv add --optional dev <package-name>
+
+# remove 依赖
+uv remove <package-name>
+
+# remove 依赖到[project.optional-dependencies]
+uv remove <package-name> --optional dev
+
+```
+
+**代码格式化：**
+
+```bash
+# 安装 pre-commit（可选，提交前自动格式化）
+uv sync --extra dev
+pre-commit install
+
+# 手动格式化所有文件
+uv run ruff format .
+
+# 手动检查代码规范
+uv run ruff check .
 ```
 
 ### 提交流程
@@ -81,6 +115,12 @@ docs: 更新 README 部署说明
 - 函数和类需要添加 docstring
 - 重要逻辑添加注释
 - 新功能需要更新相关文档
+- **自动格式化**：项目使用 ruff 进行代码格式化和 lint，推荐安装 pre-commit hooks：
+  ```bash
+  uv sync --extra dev
+  pre-commit install
+  ```
+  提交代码时会自动运行 ruff format 和 ruff check
 
 ### CI 自动检查
 

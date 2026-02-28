@@ -8,8 +8,11 @@ python -m py_compile src/storage.py src/scheduler.py src/search_service.py
 python -m py_compile src/market_analyzer.py src/stock_analyzer.py
 python -m py_compile data_provider/*.py
 
-echo "==> backend-gate: flake8 critical checks"
-flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+echo "==> backend-gate: ruff lint check"
+uv run ruff check . --select=E9,F63,F7,F82 --show-source --statistics
+
+echo "==> backend-gate: ruff format check"
+uv run ruff format --check .
 
 echo "==> backend-gate: local deterministic checks"
 ./test.sh code
