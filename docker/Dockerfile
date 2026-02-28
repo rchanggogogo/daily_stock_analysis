@@ -35,10 +35,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
-COPY requirements.txt .
+COPY requirements.txt pyproject.toml uv.lock ./
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装 uv（比 pip 快 10-100 倍）
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# 安装 Python 依赖（优先使用 uv，回退到 pip）
+RUN if [ -f pyproject.toml ]; then \
+        uv sync --frozen; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 # 复制应用代码
 COPY *.py ./

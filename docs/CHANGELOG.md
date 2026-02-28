@@ -159,6 +159,7 @@
   - 新增 `pyproject.toml` 配置：black、isort、ruff、bandit
   - 更新 `README.md` 和 `docs/CONTRIBUTING.md`，使用 `uv sync` 和 `uv run` 命令
   - 开发者可使用 `uv run python main.py` 运行脚本，或 `source .venv/bin/activate` 激活虚拟环境后直接运行
+  - Dockerfile 集成 uv，使用 `uv sync --frozen` 加速依赖安装，保持 pip 回退兼容性
 
 ## [3.2.11] - 2026-02-23
 
