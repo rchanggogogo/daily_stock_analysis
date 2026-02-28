@@ -18,31 +18,27 @@ from pathlib import Path
 from typing import List, Optional
 
 
-class RelativePathFormatter(logging.Formatter):
-    """
-    自定义日志格式化器：将绝对路径转换为相对路径
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(pathname)s:%(lineno)d | %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-    方便在日志中定位问题，避免显示冗长的绝对路径
-    """
+
+class RelativePathFormatter(logging.Formatter):
+    """自定义 Formatter，输出相对路径而非绝对路径"""
+
+    def __init__(self, fmt=None, datefmt=None, relative_to=None):
+        super().__init__(fmt, datefmt)
+        self.relative_to = Path(relative_to) if relative_to else Path.cwd()
 
     def format(self, record):
-        # 将 pathname 转换为相对路径（相对于项目根目录）
-        if hasattr(record, 'pathname') and record.pathname:
-            try:
-                # 获取项目根目录（假设是当前工作目录）
-                record.pathname = str(Path(record.pathname).relative_to(Path.cwd()))
-            except ValueError:
-                # 如果无法转换为相对路径，保持原样
-                pass
+        # 将绝对路径转为相对路径
+        try:
+            record.pathname = str(Path(record.pathname).relative_to(self.relative_to))
+        except ValueError:
+            # 如果无法转换为相对路径，保持原样
+            pass
         return super().format(record)
 
-# ============================================================
-# 日志格式常量
-# ============================================================
 
-# 日志格式：时间 | 级别 | 模块名 | 文件路径:行号 | 消息
-LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(pathname)s:%(lineno)d | %(message)s'
-LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 # 默认需要降低日志级别的第三方库
 DEFAULT_QUIET_LOGGERS = [
@@ -97,11 +93,15 @@ def setup_logging(
     # 清除已有 handler，避免重复添加
     if root_logger.handlers:
         root_logger.handlers.clear()
-
+    # 创建相对路径 Formatter（相对于项目根目录）
+    project_root = Path.cwd()
+    rel_formatter = RelativePathFormatter(
+        LOG_FORMAT, LOG_DATE_FORMAT, relative_to=project_root
+    )
     # Handler 1: 控制台输出
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
-    console_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    console_handler.setFormatter(rel_formatter)
     root_logger.addHandler(console_handler)
 
     # Handler 2: 常规日志文件（INFO 级别，10MB 轮转）
@@ -112,7 +112,7 @@ def setup_logging(
         encoding='utf-8'
     )
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    file_handler.setFormatter(rel_formatter)
     root_logger.addHandler(file_handler)
 
     # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
@@ -123,7 +123,7 @@ def setup_logging(
         encoding='utf-8'
     )
     debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    debug_handler.setFormatter(rel_formatter)
     root_logger.addHandler(debug_handler)
 
     # 降低第三方库的日志级别
@@ -134,7 +134,22 @@ def setup_logging(
     for logger_name in quiet_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
-    # 输出初始化完成信息
-    logging.info(f"日志系统初始化完成，日志目录: {log_path.absolute()}")
-    logging.info(f"常规日志: {log_file}")
-    logging.info(f"调试日志: {debug_log_file}")
+    # 输出初始化完成信息（使用相对路径）
+    try:
+        rel_log_path = log_path.resolve().relative_to(project_root)
+    except ValueError:
+        rel_log_path = log_path
+
+    try:
+        rel_log_file = log_file.resolve().relative_to(project_root)
+    except ValueError:
+        rel_log_file = log_file
+
+    try:
+        rel_debug_log_file = debug_log_file.resolve().relative_to(project_root)
+    except ValueError:
+        rel_debug_log_file = debug_log_file
+
+    logging.info(f"日志系统初始化完成，日志目录: {rel_log_path}")
+    logging.info(f"常规日志: {rel_log_file}")
+    logging.info(f"调试日志: {rel_debug_log_file}")
