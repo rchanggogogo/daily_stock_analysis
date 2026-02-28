@@ -17,11 +17,31 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List, Optional
 
+
+class RelativePathFormatter(logging.Formatter):
+    """
+    自定义日志格式化器：将绝对路径转换为相对路径
+
+    方便在日志中定位问题，避免显示冗长的绝对路径
+    """
+
+    def format(self, record):
+        # 将 pathname 转换为相对路径（相对于项目根目录）
+        if hasattr(record, 'pathname') and record.pathname:
+            try:
+                # 获取项目根目录（假设是当前工作目录）
+                record.pathname = str(Path(record.pathname).relative_to(Path.cwd()))
+            except ValueError:
+                # 如果无法转换为相对路径，保持原样
+                pass
+        return super().format(record)
+
 # ============================================================
 # 日志格式常量
 # ============================================================
 
-LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s'
+# 日志格式：时间 | 级别 | 模块名 | 文件路径:行号 | 消息
+LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(pathname)s:%(lineno)d | %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 # 默认需要降低日志级别的第三方库
@@ -81,7 +101,7 @@ def setup_logging(
     # Handler 1: 控制台输出
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
-    console_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    console_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
     root_logger.addHandler(console_handler)
 
     # Handler 2: 常规日志文件（INFO 级别，10MB 轮转）
@@ -92,7 +112,7 @@ def setup_logging(
         encoding='utf-8'
     )
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    file_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
     root_logger.addHandler(file_handler)
 
     # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
@@ -103,7 +123,7 @@ def setup_logging(
         encoding='utf-8'
     )
     debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    debug_handler.setFormatter(RelativePathFormatter(LOG_FORMAT, LOG_DATE_FORMAT))
     root_logger.addHandler(debug_handler)
 
     # 降低第三方库的日志级别
