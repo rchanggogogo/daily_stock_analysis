@@ -23,6 +23,7 @@ from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
 from src.config import Config, get_config, get_api_keys_for_model, extra_litellm_params, get_configured_llm_models
+from src.core.trading_calendar import get_market_name_from_code
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.schemas.report_schema import AnalysisReportSchema
@@ -436,7 +437,7 @@ class GeminiAnalyzer:
     # 核心模块：核心结论 + 数据透视 + 舆情情报 + 作战计划
     # ========================================
 
-    SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析师，负责生成专业的【决策仪表盘】分析报告。
+    SYSTEM_PROMPT = """你是一位专注于趋势交易的{{market_name}}投资分析师，负责生成专业的【决策仪表盘】分析报告。
 
 ## 核心交易理念（必须严格遵守）
 
@@ -485,7 +486,7 @@ class GeminiAnalyzer:
 
 ```json
 {
-    "stock_name": "股票中文名称",
+    "stock_name": "股票完整名称",
     "sentiment_score": 0-100整数,
     "trend_prediction": "强烈看多/看多/震荡/看空/强烈看空",
     "operation_advice": "买入/加仓/持有/减仓/卖出/观望",
@@ -705,7 +706,7 @@ class GeminiAnalyzer:
         """Check if LiteLLM is properly configured with at least one API key."""
         return self._router is not None or self._litellm_available
 
-    def _call_litellm(self, prompt: str, generation_config: dict) -> Tuple[str, str, Dict[str, Any]]:
+    def _call_litellm(self, prompt: str, generation_config: dict, **kwargs) -> Tuple[str, str, Dict[str, Any]]:
         """Call LLM via litellm with fallback across configured models.
 
         When channels/YAML are configured, every model goes through the Router
@@ -716,6 +717,7 @@ class GeminiAnalyzer:
         Args:
             prompt: User prompt text.
             generation_config: Dict with optional keys: temperature, max_output_tokens, max_tokens.
+            **kwargs: Additional keyword arguments to pass to litellm.completion() or other methods.
 
         Returns:
             Tuple of (response text, model_used, usage). On success model_used is the full model
@@ -733,7 +735,7 @@ class GeminiAnalyzer:
         models_to_try = [m for m in models_to_try if m]
 
         use_channel_router = self._has_channel_config(config)
-
+        market_name = get_market_name_from_code(kwargs.get("code", "")) or "股票"
         last_error = None
         for model in models_to_try:
             try:
@@ -741,7 +743,7 @@ class GeminiAnalyzer:
                 call_kwargs: Dict[str, Any] = {
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "system", "content": self.SYSTEM_PROMPT.replace("{{market_name}}", market_name)},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": temperature,
@@ -791,6 +793,7 @@ class GeminiAnalyzer:
         prompt: str,
         max_tokens: int = 2048,
         temperature: float = 0.7,
+        **kwargs: Dict[str, Any]
     ) -> Optional[str]:
         """Public entry point for free-form text generation.
 
@@ -802,6 +805,7 @@ class GeminiAnalyzer:
             prompt:      Text prompt to send to the LLM.
             max_tokens:  Maximum tokens in the response (default 2048).
             temperature: Sampling temperature (default 0.7).
+            code:        Stock code to use in the prompt (default "").
 
         Returns:
             Response text, or None if the LLM call fails (error is logged).
@@ -810,6 +814,7 @@ class GeminiAnalyzer:
             result = self._call_litellm(
                 prompt,
                 generation_config={"max_tokens": max_tokens, "temperature": temperature},
+                code=kwargs.get("code", "")
             )
             if isinstance(result, tuple):
                 text, model_used, usage = result
@@ -907,7 +912,7 @@ class GeminiAnalyzer:
 
             while True:
                 start_time = time.time()
-                response_text, model_used, llm_usage = self._call_litellm(current_prompt, generation_config)
+                response_text, model_used, llm_usage = self._call_litellm(current_prompt, generation_config, code=code)
                 elapsed = time.time() - start_time
 
                 # 记录响应信息

@@ -62,6 +62,24 @@ def get_market_for_stock(code: str) -> Optional[str]:
         return "cn"
     return None
 
+def get_market_name_from_code(code: str) -> Optional[str]:
+    """
+    Get market name from stock code.
+
+    Returns:
+        A股 | 港股 | 美股 | None
+        None: unrecognized stock code
+    """
+    market = get_market_for_stock(code)
+    if not market:
+        return None
+    return {
+        "cn": "A股",
+        "hk": "港股",
+        "us": "美股",
+    }.get(market)
+
+
 
 def is_market_open(market: str, check_date: date) -> bool:
     """

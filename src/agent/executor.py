@@ -22,6 +22,7 @@ from json_repair import repair_json
 
 from src.agent.llm_adapter import LLMToolAdapter
 from src.agent.tools.registry import ToolRegistry
+from src.core.trading_calendar import get_market_name_from_code
 from src.storage import persist_llm_usage as _persist_usage
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class AgentResult:
 # System prompt builder
 # ============================================================
 
-AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析 Agent，拥有数据工具和交易策略，负责生成专业的【决策仪表盘】分析报告。
+AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{market_name}投资分析 Agent，拥有数据工具和交易策略，负责生成专业的【决策仪表盘】分析报告。
 
 ## 工作流程（必须严格按阶段顺序执行，每阶段等工具结果返回后再进入下一阶段）
 
@@ -135,7 +136,7 @@ AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析 
 
 ```json
 {{
-    "stock_name": "股票中文名称",
+    "stock_name": "股票完整名称",
     "sentiment_score": 0-100整数,
     "trend_prediction": "强烈看多/看多/震荡/看空/强烈看空",
     "operation_advice": "买入/加仓/持有/减仓/卖出/观望",
@@ -225,7 +226,7 @@ AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析 
 5. **风险优先级**：舆情中的风险点要醒目标出
 """
 
-CHAT_SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析 Agent，拥有数据工具和交易策略，负责解答用户的股票投资问题。
+CHAT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{market_name}投资分析 Agent，拥有数据工具和交易策略，负责解答用户的股票投资问题。
 
 ## 分析工作流程（必须严格按阶段执行，禁止跳步或合并阶段）
 
@@ -334,7 +335,8 @@ class AgentExecutor:
         skills_section = ""
         if self.skill_instructions:
             skills_section = f"## 激活的交易策略\n\n{self.skill_instructions}"
-        system_prompt = AGENT_SYSTEM_PROMPT.format(skills_section=skills_section)
+        market_name = get_market_name_from_code(context.get("stock_code", "")) or "股票"
+        system_prompt = AGENT_SYSTEM_PROMPT.format(market_name=market_name, skills_section=skills_section)
 
         # Build tool declarations in OpenAI format (litellm handles all providers)
         tool_decls = self.tool_registry.to_openai_tools()
@@ -369,7 +371,8 @@ class AgentExecutor:
         skills_section = ""
         if self.skill_instructions:
             skills_section = f"## 激活的交易策略\n\n{self.skill_instructions}"
-        system_prompt = CHAT_SYSTEM_PROMPT.format(skills_section=skills_section)
+        market_name = get_market_name_from_code(context.get("stock_code", "")) or "股票"
+        system_prompt = CHAT_SYSTEM_PROMPT.format(market_name=market_name, skills_section=skills_section)
 
         # Build tool declarations in OpenAI format (litellm handles all providers)
         tool_decls = self.tool_registry.to_openai_tools()
