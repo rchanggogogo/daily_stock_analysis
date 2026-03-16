@@ -335,7 +335,10 @@ class AgentExecutor:
         skills_section = ""
         if self.skill_instructions:
             skills_section = f"## 激活的交易策略\n\n{self.skill_instructions}"
-        market_name = get_market_name_from_code(context.get("stock_code", "")) or "股票"
+        if context and "stock_code" in context:
+            market_name = get_market_name_from_code(context.get("stock_code", "")) or "股票"
+        else:
+            market_name = "股票"
         system_prompt = AGENT_SYSTEM_PROMPT.format(market_name=market_name, skills_section=skills_section)
 
         # Build tool declarations in OpenAI format (litellm handles all providers)
