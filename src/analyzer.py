@@ -735,7 +735,7 @@ class GeminiAnalyzer:
         models_to_try = [m for m in models_to_try if m]
 
         use_channel_router = self._has_channel_config(config)
-        market_name = get_market_name_from_code(kwargs.get("code", "")) or "股票"
+        market_name = get_market_name_from_code(kwargs.get("code", "")) or "A股"
         last_error = None
         for model in models_to_try:
             try:
