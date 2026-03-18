@@ -22,6 +22,10 @@ from json_repair import repair_json
 from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
+
+
+from src.core.trading_calendar import get_market_name_from_code
+
 from src.config import (
     Config,
     extra_litellm_params,
@@ -30,7 +34,7 @@ from src.config import (
     get_configured_llm_models,
     resolve_news_window_days,
 )
-from src.core.trading_calendar import get_market_name_from_code
+
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.schemas.report_schema import AnalysisReportSchema
