@@ -11,6 +11,7 @@ A股自选股智能分析系统 - 配置管理模块
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -42,6 +43,12 @@ class ConfigIssue:
 _MANAGED_LITELLM_KEY_PROVIDERS = {"gemini", "vertex_ai", "anthropic", "openai", "deepseek"}
 SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama")
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
+NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
+    "ultra_short": 1,
+    "short": 3,
+    "medium": 7,
+    "long": 30,
+}
 
 
 def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
@@ -52,6 +59,19 @@ def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
     if not normalized:
         return default
     return normalized not in _FALSEY_ENV_VALUES
+
+
+def normalize_news_strategy_profile(value: Optional[str]) -> str:
+    """Normalize news strategy profile to known values."""
+    candidate = (value or "short").strip().lower()
+    return candidate if candidate in NEWS_STRATEGY_WINDOWS else "short"
+
+
+def resolve_news_window_days(news_max_age_days: int, news_strategy_profile: Optional[str]) -> int:
+    """Resolve effective news window days from profile and global max-age."""
+    profile = normalize_news_strategy_profile(news_strategy_profile)
+    profile_days = NEWS_STRATEGY_WINDOWS.get(profile, NEWS_STRATEGY_WINDOWS["short"])
+    return max(1, min(max(1, int(news_max_age_days)), profile_days))
 
 
 def canonicalize_llm_channel_protocol(value: Optional[str]) -> str:
@@ -224,6 +244,60 @@ def _uses_direct_env_provider(model: str) -> bool:
     return bool(provider) and provider not in _MANAGED_LITELLM_KEY_PROVIDERS
 
 
+def normalize_agent_litellm_model(
+    model: str,
+    configured_models: Optional[set[str]] = None,
+) -> str:
+    """Normalize AGENT_LITELLM_MODEL while preserving configured router aliases."""
+    normalized_model = (model or "").strip()
+    if not normalized_model:
+        return ""
+    if "/" not in normalized_model:
+        if configured_models and normalized_model in configured_models:
+            return normalized_model
+        return f"openai/{normalized_model}"
+    return normalized_model
+
+
+def get_effective_agent_primary_model(config: "Config") -> str:
+    """Return the effective Agent primary model with fallback inheritance."""
+    configured_router_models = set(
+        get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
+    )
+    configured_agent_model = normalize_agent_litellm_model(
+        getattr(config, "agent_litellm_model", ""),
+        configured_models=configured_router_models,
+    )
+    if configured_agent_model:
+        return configured_agent_model
+    return (getattr(config, "litellm_model", "") or "").strip()
+
+
+def get_effective_agent_models_to_try(config: "Config") -> List[str]:
+    """Return Agent model try-order: primary + global fallbacks (deduped)."""
+    configured_router_models = set(
+        get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
+    )
+    raw_models = [get_effective_agent_primary_model(config)] + (
+        getattr(config, "litellm_fallback_models", []) or []
+    )
+    seen = set()
+    ordered_models: List[str] = []
+    for model in raw_models:
+        normalized_model = (model or "").strip()
+        if not normalized_model:
+            continue
+        dedupe_key = normalize_agent_litellm_model(
+            normalized_model,
+            configured_models=configured_router_models,
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        ordered_models.append(normalized_model)
+    return ordered_models
+
+
 def setup_env(override: bool = False):
     """
     Initialize environment variables from .env file.
@@ -264,7 +338,8 @@ class Config:
 
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
-    
+    tickflow_api_key: Optional[str] = None
+
     # === AI 分析配置 ===
     # LiteLLM unified model config (provider/model format, e.g. gemini/gemini-2.5-flash)
     litellm_model: str = ""  # Primary model; must include provider prefix when set explicitly
@@ -328,15 +403,35 @@ class Config:
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
     searxng_base_urls: List[str] = field(default_factory=list)  # SearXNG instance URLs (self-hosted, no quota)
 
+    # === Social Sentiment (US stocks only, api.adanos.org) ===
+    social_sentiment_api_key: Optional[str] = None
+    social_sentiment_api_url: str = "https://api.adanos.org"
+
     # === 新闻与分析筛选配置 ===
     news_max_age_days: int = 3   # 新闻最大时效（天）
+    news_strategy_profile: str = "short"  # 新闻窗口策略档位：ultra_short/short/medium/long
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === Agent 模式配置 ===
+    agent_litellm_model: str = ""  # Optional Agent-only primary model; empty inherits LITELLM_MODEL
     agent_mode: bool = False
+    _agent_mode_explicit: bool = False  # True when AGENT_MODE was explicitly set in env
     agent_max_steps: int = 10
     agent_skills: List[str] = field(default_factory=list)
     agent_strategy_dir: Optional[str] = None
+    agent_nl_routing: bool = False  # Enable natural language routing in bot dispatcher
+    agent_arch: str = "single"     # Agent architecture: 'single' (legacy) or 'multi' (orchestrator)
+    agent_orchestrator_mode: str = "standard"  # Orchestrator mode: quick/standard/full/strategy
+    agent_orchestrator_timeout_s: int = 600  # Cooperative timeout budget for the whole multi-agent pipeline
+    agent_risk_override: bool = True  # Allow risk agent to veto buy signals
+    agent_deep_research_budget: int = 30000  # Max token budget for deep research
+    agent_deep_research_timeout: int = 180  # Max seconds for /research command before returning timeout
+    agent_memory_enabled: bool = False  # Enable memory & calibration system
+    agent_strategy_autoweight: bool = True  # Auto-weight strategies by backtest performance
+    agent_strategy_routing: str = "auto"  # Strategy routing: 'auto' (regime-based) or 'manual'
+    agent_event_monitor_enabled: bool = False  # Enable periodic event-driven alert checks in schedule mode
+    agent_event_monitor_interval_minutes: int = 5  # Polling interval for event monitor background checks
+    agent_event_alert_rules_json: str = ""  # JSON array of serialized EventMonitor rules
 
     # === 通知配置（可同时配置多个，全部推送）===
     
@@ -492,6 +587,14 @@ class Config:
     # 基本面缓存最大条目数（避免长时间运行内存增长）
     fundamental_cache_max_entries: int = 256
 
+    # === Portfolio PR2: import/risk/fx settings ===
+    portfolio_risk_concentration_alert_pct: float = 35.0
+    portfolio_risk_drawdown_alert_pct: float = 15.0
+    portfolio_risk_stop_loss_alert_pct: float = 10.0
+    portfolio_risk_stop_loss_near_ratio: float = 0.8
+    portfolio_risk_lookback_days: int = 180
+    portfolio_fx_update_enabled: bool = True
+
     # Discord 机器人状态
     discord_bot_status: str = "A股智能分析 | /help"
 
@@ -543,6 +646,32 @@ class Config:
     # CONFIG_VALIDATE_MODE=warn (default): log all issues but always continue startup
     # CONFIG_VALIDATE_MODE=strict: exit(1) when any "error" severity issue is found
     config_validate_mode: str = "warn"
+
+    # --- Post-init validation ---------------------------------------------------
+    _VALID_AGENT_ARCH = {"single", "multi"}
+    _VALID_ORCHESTRATOR_MODES = {"quick", "standard", "full", "strategy"}
+    _VALID_STRATEGY_ROUTING = {"auto", "manual"}
+
+    def __post_init__(self) -> None:
+        _log = logging.getLogger(__name__)
+        if self.agent_arch not in self._VALID_AGENT_ARCH:
+            _log.warning(
+                "Invalid AGENT_ARCH=%r, falling back to 'single'. Valid: %s",
+                self.agent_arch, self._VALID_AGENT_ARCH,
+            )
+            object.__setattr__(self, "agent_arch", "single")
+        if self.agent_orchestrator_mode not in self._VALID_ORCHESTRATOR_MODES:
+            _log.warning(
+                "Invalid AGENT_ORCHESTRATOR_MODE=%r, falling back to 'standard'. Valid: %s",
+                self.agent_orchestrator_mode, self._VALID_ORCHESTRATOR_MODES,
+            )
+            object.__setattr__(self, "agent_orchestrator_mode", "standard")
+        if self.agent_strategy_routing not in self._VALID_STRATEGY_ROUTING:
+            _log.warning(
+                "Invalid AGENT_STRATEGY_ROUTING=%r, falling back to 'auto'. Valid: %s",
+                self.agent_strategy_routing, self._VALID_STRATEGY_ROUTING,
+            )
+            object.__setattr__(self, "agent_strategy_routing", "auto")
 
     # 单例实例存储
     _instance: Optional['Config'] = None
@@ -744,6 +873,11 @@ class Config:
                 if m not in _seen and not _seen.add(m)  # type: ignore[func-returns-value]
             ]
 
+        agent_litellm_model = normalize_agent_litellm_model(
+            os.getenv('AGENT_LITELLM_MODEL', ''),
+            configured_models=set(get_configured_llm_models(llm_model_list)),
+        )
+
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
         bocha_api_keys = [k.strip() for k in bocha_keys_str.split(',') if k.strip()]
@@ -785,6 +919,22 @@ class Config:
         else:
             # 未显式配置时，根据消息类型选择默认字节数
             wechat_max_bytes = 2048 if wechat_msg_type_lower == 'text' else 4000
+
+        # Preserve historical semantics for startup flags: only an explicit
+        # literal "true" enables immediate execution; empty strings stay False.
+        legacy_run_immediately_env = os.getenv('RUN_IMMEDIATELY')
+        legacy_run_immediately = (
+            legacy_run_immediately_env.lower() == 'true'
+            if legacy_run_immediately_env is not None
+            else True
+        )
+
+        schedule_run_immediately_env = os.getenv('SCHEDULE_RUN_IMMEDIATELY')
+        schedule_run_immediately = (
+            schedule_run_immediately_env.lower() == 'true'
+            if schedule_run_immediately_env is not None
+            else legacy_run_immediately
+        )
         
         return cls(
             stock_list=stock_list,
@@ -792,6 +942,7 @@ class Config:
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
+            tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
             llm_temperature=resolve_unified_llm_temperature(litellm_model),
@@ -840,12 +991,32 @@ class Config:
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,
             searxng_base_urls=searxng_base_urls,
+            social_sentiment_api_key=os.getenv('SOCIAL_SENTIMENT_API_KEY') or None,
+            social_sentiment_api_url=os.getenv('SOCIAL_SENTIMENT_API_URL', 'https://api.adanos.org').rstrip('/'),
             news_max_age_days=max(1, int(os.getenv('NEWS_MAX_AGE_DAYS', '3'))),
+            news_strategy_profile=cls._parse_news_strategy_profile(
+                os.getenv('NEWS_STRATEGY_PROFILE', 'short')
+            ),
             bias_threshold=max(1.0, float(os.getenv('BIAS_THRESHOLD', '5.0'))),
+            agent_litellm_model=agent_litellm_model,
             agent_mode=os.getenv('AGENT_MODE', 'false').lower() == 'true',
+            _agent_mode_explicit=os.getenv('AGENT_MODE') is not None,
             agent_max_steps=int(os.getenv('AGENT_MAX_STEPS', '10')),
             agent_skills=[s.strip() for s in os.getenv('AGENT_SKILLS', '').split(',') if s.strip()],
             agent_strategy_dir=os.getenv('AGENT_STRATEGY_DIR'),
+            agent_nl_routing=os.getenv('AGENT_NL_ROUTING', 'false').lower() == 'true',
+            agent_arch=os.getenv('AGENT_ARCH', 'single').lower(),
+            agent_orchestrator_mode=os.getenv('AGENT_ORCHESTRATOR_MODE', 'standard').lower(),
+            agent_orchestrator_timeout_s=max(0, int(os.getenv('AGENT_ORCHESTRATOR_TIMEOUT_S', '600'))),
+            agent_risk_override=os.getenv('AGENT_RISK_OVERRIDE', 'true').lower() == 'true',
+            agent_deep_research_budget=int(os.getenv('AGENT_DEEP_RESEARCH_BUDGET', '30000')),
+            agent_deep_research_timeout=max(30, int(os.getenv('AGENT_DEEP_RESEARCH_TIMEOUT', '180'))),
+            agent_memory_enabled=os.getenv('AGENT_MEMORY_ENABLED', 'false').lower() == 'true',
+            agent_strategy_autoweight=os.getenv('AGENT_STRATEGY_AUTOWEIGHT', 'true').lower() == 'true',
+            agent_strategy_routing=os.getenv('AGENT_STRATEGY_ROUTING', 'auto').lower(),
+            agent_event_monitor_enabled=os.getenv('AGENT_EVENT_MONITOR_ENABLED', 'false').lower() == 'true',
+            agent_event_monitor_interval_minutes=max(1, int(os.getenv('AGENT_EVENT_MONITOR_INTERVAL_MINUTES', '5'))),
+            agent_event_alert_rules_json=os.getenv('AGENT_EVENT_ALERT_RULES_JSON', ''),
             wechat_webhook_url=os.getenv('WECHAT_WEBHOOK_URL'),
             feishu_webhook_url=os.getenv('FEISHU_WEBHOOK_URL'),
             telegram_bot_token=os.getenv('TELEGRAM_BOT_TOKEN'),
@@ -865,7 +1036,10 @@ class Config:
             custom_webhook_bearer_token=os.getenv('CUSTOM_WEBHOOK_BEARER_TOKEN'),
             webhook_verify_ssl=os.getenv('WEBHOOK_VERIFY_SSL', 'true').lower() == 'true',
             discord_bot_token=os.getenv('DISCORD_BOT_TOKEN'),
-            discord_main_channel_id=os.getenv('DISCORD_MAIN_CHANNEL_ID'),
+            discord_main_channel_id=(
+                os.getenv('DISCORD_MAIN_CHANNEL_ID')
+                or os.getenv('DISCORD_CHANNEL_ID')
+            ),
             discord_webhook_url=os.getenv('DISCORD_WEBHOOK_URL'),
             astrbot_url=os.getenv('ASTRBOT_URL'),
             astrbot_token=os.getenv('ASTRBOT_TOKEN'),
@@ -907,8 +1081,8 @@ class Config:
             https_proxy=os.getenv('HTTPS_PROXY'),
             schedule_enabled=os.getenv('SCHEDULE_ENABLED', 'false').lower() == 'true',
             schedule_time=os.getenv('SCHEDULE_TIME', '18:00'),
-            schedule_run_immediately=os.getenv('SCHEDULE_RUN_IMMEDIATELY', 'true').lower() == 'true',
-            run_immediately=os.getenv('RUN_IMMEDIATELY', 'true').lower() == 'true',
+            schedule_run_immediately=schedule_run_immediately,
+            run_immediately=legacy_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             market_review_region=cls._parse_market_review_region(
                 os.getenv('MARKET_REVIEW_REGION', 'cn')
@@ -965,7 +1139,21 @@ class Config:
             ),
             fundamental_retry_max=int(os.getenv('FUNDAMENTAL_RETRY_MAX', '1')),
             fundamental_cache_ttl_seconds=int(os.getenv('FUNDAMENTAL_CACHE_TTL_SECONDS', '120')),
-            fundamental_cache_max_entries=int(os.getenv('FUNDAMENTAL_CACHE_MAX_ENTRIES', '256'))
+            fundamental_cache_max_entries=int(os.getenv('FUNDAMENTAL_CACHE_MAX_ENTRIES', '256')),
+            portfolio_risk_concentration_alert_pct=float(
+                os.getenv('PORTFOLIO_RISK_CONCENTRATION_ALERT_PCT', '35.0')
+            ),
+            portfolio_risk_drawdown_alert_pct=float(
+                os.getenv('PORTFOLIO_RISK_DRAWDOWN_ALERT_PCT', '15.0')
+            ),
+            portfolio_risk_stop_loss_alert_pct=float(
+                os.getenv('PORTFOLIO_RISK_STOP_LOSS_ALERT_PCT', '10.0')
+            ),
+            portfolio_risk_stop_loss_near_ratio=float(
+                os.getenv('PORTFOLIO_RISK_STOP_LOSS_NEAR_RATIO', '0.8')
+            ),
+            portfolio_risk_lookback_days=int(os.getenv('PORTFOLIO_RISK_LOOKBACK_DAYS', '180')),
+            portfolio_fx_update_enabled=os.getenv('PORTFOLIO_FX_UPDATE_ENABLED', 'true').lower() == 'true'
         )
     
     @classmethod
@@ -1225,6 +1413,26 @@ class Config:
         return 'simple'
 
     @classmethod
+    def _parse_news_strategy_profile(cls, value: Optional[str]) -> str:
+        """Parse NEWS_STRATEGY_PROFILE, fallback to short for invalid values."""
+        normalized = normalize_news_strategy_profile(value)
+        raw = (value or "short").strip().lower()
+        if raw != normalized:
+            logging.getLogger(__name__).warning(
+                "NEWS_STRATEGY_PROFILE '%s' invalid, fallback to 'short' "
+                "(valid: ultra_short/short/medium/long)",
+                value,
+            )
+        return normalized
+
+    def get_effective_news_window_days(self) -> int:
+        """Return effective news window days after profile + max-age merge."""
+        return resolve_news_window_days(
+            news_max_age_days=self.news_max_age_days,
+            news_strategy_profile=self.news_strategy_profile,
+        )
+
+    @classmethod
     def _parse_market_review_region(cls, value: str) -> str:
         """解析大盘复盘市场区域，非法值记录警告后回退为 cn"""
         import logging
@@ -1284,6 +1492,31 @@ class Config:
     def reset_instance(cls) -> None:
         """重置单例（主要用于测试）"""
         cls._instance = None
+
+    def is_agent_available(self) -> bool:
+        """Check whether agent capabilities are usable.
+
+        Decision table:
+
+        +-----------------------+----------------------------------+---------+
+        | AGENT_MODE env        | effective Agent primary model set| Result  |
+        +-----------------------+----------------------------------+---------+
+        | ``true``              | any                              | True    |
+        | ``false`` (explicit)  | any                              | False   |
+        | not set (default)     | yes                              | True    |
+        | not set (default)     | no                               | False   |
+        +-----------------------+----------------------------------+---------+
+
+        This keeps backward compatibility: users who never touch
+        ``AGENT_MODE`` get agent features automatically once they configure an
+        Agent-effective model, while ``AGENT_MODE=false`` acts as an explicit
+        kill-switch.
+        """
+        # Explicit AGENT_MODE takes full precedence
+        if self._agent_mode_explicit:
+            return self.agent_mode
+        # Auto-detect: Agent inherits global model when AGENT_LITELLM_MODEL is empty.
+        return bool(get_effective_agent_primary_model(self))
 
     def refresh_stock_list(self) -> None:
         """
@@ -1375,6 +1608,24 @@ class Config:
 
         available_router_models = get_configured_llm_models(self.llm_model_list)
         available_router_model_set = set(available_router_models)
+
+        def _has_runtime_source_for_model(model: str) -> bool:
+            if not model or _uses_direct_env_provider(model):
+                return True
+            provider = _get_litellm_provider(model)
+            if provider in {"gemini", "vertex_ai"}:
+                return any(k and len(k) >= 8 for k in (self.gemini_api_keys or []))
+            if provider == "anthropic":
+                return any(k and len(k) >= 8 for k in (self.anthropic_api_keys or []))
+            if provider == "deepseek":
+                return any(k and len(k) >= 8 for k in (self.deepseek_api_keys or []))
+            if provider == "openai":
+                return any(k and len(k) >= 8 for k in (self.openai_api_keys or []))
+            return False
+
+        configured_agent_primary_model = bool((self.agent_litellm_model or "").strip())
+        effective_agent_primary_model = get_effective_agent_primary_model(self)
+
         if available_router_model_set:
             if (
                 self.litellm_model
@@ -1388,6 +1639,21 @@ class Config:
                         f" 当前可用模型：{', '.join(available_router_models[:6])}"
                     ),
                     field="LITELLM_MODEL",
+                ))
+
+            if (
+                configured_agent_primary_model
+                and effective_agent_primary_model
+                and not _uses_direct_env_provider(effective_agent_primary_model)
+                and effective_agent_primary_model not in available_router_model_set
+            ):
+                issues.append(ConfigIssue(
+                    severity="error",
+                    message=(
+                        "AGENT_LITELLM_MODEL 已配置，但当前渠道/配置文件中不存在该模型。"
+                        f" 当前可用模型：{', '.join(available_router_models[:6])}"
+                    ),
+                    field="AGENT_LITELLM_MODEL",
                 ))
 
             invalid_fallbacks = [
@@ -1418,6 +1684,19 @@ class Config:
                     ),
                     field="VISION_MODEL",
                 ))
+        elif (
+            configured_agent_primary_model
+            and effective_agent_primary_model
+            and not _has_runtime_source_for_model(effective_agent_primary_model)
+        ):
+            issues.append(ConfigIssue(
+                severity="error",
+                message=(
+                    "AGENT_LITELLM_MODEL 已配置，但未找到可用的运行时来源"
+                    "（启用渠道或匹配的 API Key）。"
+                ),
+                field="AGENT_LITELLM_MODEL",
+            ))
 
         # --- Search engine (informational only) ---
         if not (

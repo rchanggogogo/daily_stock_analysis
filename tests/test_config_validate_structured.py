@@ -222,6 +222,36 @@ class TestValidateStructuredLLM:
         issues = cfg.validate_structured()
         assert any(i.severity == "error" and i.field == "LITELLM_MODEL" for i in issues)
 
+    def test_configured_agent_primary_model_missing_from_channels_is_error(self):
+        cfg = _make_config(
+            llm_model_list=[
+                {"model_name": "openai/gpt-4o-mini", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-test"}},
+            ],
+            agent_litellm_model="openai/gpt-4o",
+        )
+        issues = cfg.validate_structured()
+        assert any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
+    def test_configured_agent_primary_model_without_runtime_source_is_error(self):
+        cfg = _make_config(
+            llm_model_list=[],
+            litellm_model="cohere/command-r-plus",
+            agent_litellm_model="openai/gpt-4o-mini",
+            openai_api_keys=[],
+        )
+        issues = cfg.validate_structured()
+        assert any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
+    def test_configured_agent_primary_model_matching_yaml_alias_is_allowed(self):
+        cfg = _make_config(
+            llm_model_list=[
+                {"model_name": "gpt4o", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-test"}},
+            ],
+            agent_litellm_model="gpt4o",
+        )
+        issues = cfg.validate_structured()
+        assert not any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
     def test_configured_vision_model_missing_from_channels_is_warning(self):
         cfg = _make_config(
             llm_model_list=[
@@ -358,6 +388,52 @@ class TestVisionKeyValidation:
         cfg = _make_config(vision_model="", gemini_api_keys=[])
         issues = cfg.validate_structured()
         assert not any(i.field == "VISION_MODEL" for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# Env alias compatibility
+# ---------------------------------------------------------------------------
+
+class TestEnvAliasCompatibility:
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_discord_channel_id_legacy_alias_is_still_loaded(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ):
+        with patch.dict(
+            "os.environ",
+            {
+                "DISCORD_BOT_TOKEN": "token",
+                "DISCORD_CHANNEL_ID": "legacy-channel",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        assert config.discord_bot_token == "token"
+        assert config.discord_main_channel_id == "legacy-channel"
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_discord_main_channel_id_takes_precedence_over_legacy_alias(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ):
+        with patch.dict(
+            "os.environ",
+            {
+                "DISCORD_BOT_TOKEN": "token",
+                "DISCORD_CHANNEL_ID": "legacy-channel",
+                "DISCORD_MAIN_CHANNEL_ID": "main-channel",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        assert config.discord_main_channel_id == "main-channel"
 
 
 # ---------------------------------------------------------------------------
